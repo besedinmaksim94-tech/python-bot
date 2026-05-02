@@ -1,104 +1,194 @@
 import asyncio
 import logging
 import os
+import aiohttp
+import aiosqlite
+import time
 
-from aiogram import Bot, Dispatcher
-from aiogram.filters import Command
-from aiogram.types import Message
-from groq import AsyncGroq
+from aiogram import Bot, Dispatcher, F
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
 # ================= LOG =================
 
 logging.basicConfig(level=logging.INFO)
-print("🔥 FILE STARTED")
+print("🔥 PRO BOT STARTED")
 
 # ================= ENV =================
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+TOKEN = os.getenv("TELEGRAM_TOKEN")
+HF_API_KEY = os.getenv("HF_API_KEY")
 
-if not TELEGRAM_TOKEN:
-    raise ValueError("TELEGRAM_TOKEN missing")
+DB = "bot.db"
 
-if not GROQ_API_KEY:
-    raise ValueError("GROQ_API_KEY missing")
+if not TOKEN or not HF_API_KEY:
+    raise ValueError("Missing env vars")
 
-# ================= INIT =================
-
-bot = Bot(token=TELEGRAM_TOKEN)
+bot = Bot(token=TOKEN)
 dp = Dispatcher()
-client = AsyncGroq(api_key=GROQ_API_KEY)
 
-print("✅ BOT READY")
+# ================= DB =================
 
-# ================= RETRY WRAPPER =================
+async def init_db():
+    async with aiosqlite.connect(DB) as db:
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            mode TEXT DEFAULT 'assistant'
+        )
+        """)
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            role TEXT,
+            content TEXT
+        )
+        """)
+        await db.commit()
 
-async def ask_ai(messages):
-    last_error = None
+async def set_mode(user_id, mode):
+    async with aiosqlite.connect(DB) as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO users (user_id, mode) VALUES (?, ?)",
+            (user_id, mode)
+        )
+        await db.commit()
 
-    for i in range(3):
-        try:
-            return await client.chat.completions.create(
-                model="llama3-70b-8192",
-                messages=messages,
-                temperature=0.7,
-            )
-        except Exception as e:
-            last_error = e
-            await asyncio.sleep(1.5 * (i + 1))
+async def get_mode(user_id):
+    async with aiosqlite.connect(DB) as db:
+        async with db.execute(
+            "SELECT mode FROM users WHERE user_id=?",
+            (user_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            return row[0] if row else "assistant"
 
-    raise last_error
+async def add_msg(user_id, role, content):
+    async with aiosqlite.connect(DB) as db:
+        await db.execute(
+            "INSERT INTO messages (user_id, role, content) VALUES (?, ?, ?)",
+            (user_id, role, content)
+        )
+        await db.commit()
+
+async def get_history(user_id, limit=10):
+    async with aiosqlite.connect(DB) as db:
+        async with db.execute(
+            "SELECT role, content FROM messages WHERE user_id=? ORDER BY id DESC LIMIT ?",
+            (user_id, limit)
+        ) as cur:
+            rows = await cur.fetchall()
+            return list(reversed(rows))
+
+# ================= UI BUTTONS =================
+
+def menu():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📚 Учитель", callback_data="teacher"),
+            InlineKeyboardButton(text="💻 Кодер", callback_data="coder")
+        ],
+        [
+            InlineKeyboardButton(text="😂 Юмор", callback_data="fun"),
+            InlineKeyboardButton(text="🤖 Обычный", callback_data="assistant")
+        ]
+    ])
+
+# ================= HF =================
+
+async def ask_hf(prompt):
+    url = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2"
+
+    headers = {"Authorization": f"Bearer {HF_API_KEY}"}
+
+    payload = {
+        "inputs": prompt,
+        "parameters": {
+            "max_new_tokens": 250,
+            "temperature": 0.7
+        }
+    }
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, headers=headers, json=payload) as resp:
+            data = await resp.json()
+
+            if isinstance(data, list):
+                return data[0].get("generated_text", "")
+
+            return str(data)
+
+# ================= STREAM (fake typing) =================
+
+async def stream_send(message: Message, text: str):
+    msg = await message.answer("🤖 ...")
+
+    buffer = ""
+    for ch in text:
+        buffer += ch
+        if len(buffer) % 20 == 0:
+            await msg.edit_text(buffer)
+            await asyncio.sleep(0.05)
+
+    await msg.edit_text(buffer)
 
 # ================= START =================
 
-@dp.message(Command("start"))
+@dp.message(F.text == "/start")
 async def start(message: Message):
-    await message.answer("👋 Привет! Я AI бот. Просто напиши вопрос.")
+    await init_db()
+    await set_mode(message.from_user.id, "assistant")
 
-# ================= MAIN =================
+    await message.answer(
+        "👋 Привет! Я AI бот для различных целей\nВыбери режим:",
+        reply_markup=menu()
+    )
+
+# ================= CALLBACK =================
+
+@dp.callback_query()
+async def cb(call: CallbackQuery):
+    mode = call.data
+    await set_mode(call.from_user.id, mode)
+
+    await call.message.edit_text(f"✅ Режим установлен: {mode}")
+
+# ================= CHAT =================
 
 @dp.message()
 async def handle(message: Message):
+    user_id = message.from_user.id
     text = (message.text or "").strip()
 
-    # 🔥 спец-ответ
-    if any(x in text.lower() for x in [
-        "кто тебя создал",
-        "кто создал тебя",
-        "кто сделал тебя"
-    ]):
+    if not text:
+        return
+
+    # спец-ответ
+    if "кто тебя создал" in text.lower():
         await message.answer("Меня создал @wertyxw 🤖")
         return
 
-    # защита от пустого
-    if not text:
-        await message.answer("❗ Отправь текстовое сообщение")
-        return
+    mode = await get_mode(user_id)
 
-    # защита от слишком длинного
-    if len(text) > 3000:
-        text = text[:3000]
+    await add_msg(user_id, "user", text)
 
-    await bot.send_chat_action(message.chat.id, "typing")
+    history = await get_history(user_id)
+
+    prompt = f"Mode: {mode}\n" + "\n".join([f"{r}: {c}" for r, c in history])
 
     try:
-        response = await ask_ai([
-            {"role": "system", "content": "Ты полезный помощник."},
-            {"role": "user", "content": text}
-        ])
+        answer = await ask_hf(prompt)
 
-        answer = response.choices[0].message.content or "Пустой ответ"
+        await add_msg(user_id, "assistant", answer)
 
-        if len(answer) > 4096:
-            answer = answer[:4096]
-
-        await message.answer(answer)
+        # streaming эффект
+        await stream_send(message, answer)
 
     except Exception as e:
-        logging.exception("AI ERROR")
-        await message.answer("⚠️ AI временно недоступен, попробуй позже")
+        logging.exception(e)
+        await message.answer("⚠️ AI недоступен")
 
-# ================= START BOT =================
+# ================= RUN =================
 
 async def main():
     print("🚀 START POLLING")
