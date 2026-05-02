@@ -97,7 +97,7 @@ def menu():
 # ================= HF =================
 
 async def ask_hf(prompt):
-    url = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2"
+    url = "https://api-inference.huggingface.co/models/google/flan-t5-large"
 
     headers = {"Authorization": f"Bearer {HF_API_KEY}"}
 
@@ -185,8 +185,8 @@ async def handle(message: Message):
         await stream_send(message, answer)
 
     except Exception as e:
-        logging.exception(e)
-        await message.answer("⚠️ AI недоступен")
+        print("FULL ERROR:", repr(e))
+        await message.answer(f"⚠️ DEBUG:\n{e}")
 
 # ================= RUN =================
 
