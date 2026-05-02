@@ -9,10 +9,7 @@ from groq import AsyncGroq
 
 # ================= LOGGING =================
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s"
-)
+logging.basicConfig(level=logging.INFO)
 
 print("🔥 FILE STARTED")
 
@@ -25,10 +22,10 @@ print("TOKEN EXISTS:", bool(TELEGRAM_TOKEN))
 print("GROQ EXISTS:", bool(GROQ_API_KEY))
 
 if not TELEGRAM_TOKEN:
-    raise ValueError("❌ TELEGRAM_TOKEN missing")
+    raise ValueError("TELEGRAM_TOKEN missing")
 
 if not GROQ_API_KEY:
-    raise ValueError("❌ GROQ_API_KEY missing")
+    raise ValueError("GROQ_API_KEY missing")
 
 # ================= INIT =================
 
@@ -38,23 +35,32 @@ dp = Dispatcher()
 client = AsyncGroq(api_key=GROQ_API_KEY)
 
 print("✅ BOT CREATED")
-print("✅ GROQ CLIENT CREATED")
+print("✅ GROQ READY")
 
-# ================= START =================
+# ================= START COMMAND =================
 
 @dp.message(Command("start"))
 async def start(message: Message):
     await message.answer(
         "👋 Привет!\n\n"
-        "🤖 Я AI бот на Groq\n"
-        "Пиши любой вопрос."
+        "🤖 Я AI бот\n"
+        "Просто задай вопрос"
     )
 
-# ================= AI LOGIC =================
+# ================= MAIN HANDLER =================
 
 @dp.message()
 async def handle(message: Message):
-    text = message.text
+    text = message.text or ""
+
+    # 🔥 СПЕЦ-ОТВЕТ
+    if any(x in text.lower() for x in [
+        "кто тебя создал",
+        "кто создал тебя",
+        "кто сделал тебя"
+    ]):
+        await message.answer("Меня создал @wertyxw 🤖")
+        return
 
     if not text:
         await message.answer("❗ Отправь текст")
@@ -64,7 +70,7 @@ async def handle(message: Message):
 
     try:
         response = await client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="llama3-70b-8192",
             messages=[
                 {"role": "system", "content": "Ты полезный помощник."},
                 {"role": "user", "content": text}
@@ -80,8 +86,8 @@ async def handle(message: Message):
         await message.answer(answer)
 
     except Exception as e:
-        logging.exception("GROQ ERROR")
-        await message.answer(f"⚠️ Ошибка AI:\n{e}")
+        logging.exception("AI ERROR")
+        await message.answer(f"⚠️ AI error:\n{e}")
 
 # ================= START BOT =================
 
