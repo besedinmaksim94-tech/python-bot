@@ -11,13 +11,12 @@ from groq import AsyncGroq
 # ================= CONFIG =================
 
 logging.basicConfig(level=logging.INFO)
-print("🔥 GROQ BOT STARTED")
 
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 if not TOKEN or not GROQ_API_KEY:
-    raise ValueError("Missing env vars")
+    raise ValueError("❌ Нет переменных окружения")
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
@@ -123,17 +122,18 @@ async def ask_groq(messages, mode):
     for r, c in messages:
         msgs.append({"role": r, "content": c})
 
-    # 🔥 retry (важно)
+    last_error = None
+
     for i in range(3):
         try:
             return await client.chat.completions.create(
-                model="llama3-70b-8192",
+                model="llama3-8b-8192",  # 🔥 стабильная модель
                 messages=msgs,
                 temperature=0.7,
             )
         except Exception as e:
-            await asyncio.sleep(1.5 * (i + 1))
             last_error = e
+            await asyncio.sleep(1.5 * (i + 1))
 
     raise last_error
 
@@ -194,13 +194,13 @@ async def handle(message: Message):
         await stream_send(message, answer)
 
     except Exception as e:
-        logging.exception(e)
-        await message.answer("⚠️ AI временно недоступен")
+        print("FULL ERROR:", repr(e))  # 🔥 теперь видно реальную ошибку
+        await message.answer(f"⚠️ Ошибка AI:\n{e}")
 
 # ================= RUN =================
 
 async def main():
-    print("🚀 START POLLING")
+    print("🚀 BOT STARTED")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
