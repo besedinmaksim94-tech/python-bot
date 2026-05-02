@@ -5,9 +5,9 @@ import os
 from aiogram import Bot, Dispatcher
 from aiogram.filters import Command
 from aiogram.types import Message
-from openai import AsyncOpenAI
+from groq import AsyncGroq
 
-# ================= ЛОГИ =================
+# ================= LOGGING =================
 
 logging.basicConfig(
     level=logging.INFO,
@@ -19,41 +19,41 @@ print("🔥 FILE STARTED")
 # ================= ENV =================
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 print("TOKEN EXISTS:", bool(TELEGRAM_TOKEN))
-print("OPENAI EXISTS:", bool(OPENAI_API_KEY))
+print("GROQ EXISTS:", bool(GROQ_API_KEY))
 
-# ЖЁСТКАЯ ПРОВЕРКА (чтобы не было silent crash)
 if not TELEGRAM_TOKEN:
-    raise ValueError("❌ TELEGRAM_TOKEN is missing")
+    raise ValueError("❌ TELEGRAM_TOKEN missing")
 
-if not OPENAI_API_KEY:
-    raise ValueError("❌ OPENAI_API_KEY is missing")
+if not GROQ_API_KEY:
+    raise ValueError("❌ GROQ_API_KEY missing")
 
 # ================= INIT =================
 
 bot = Bot(token=TELEGRAM_TOKEN)
 dp = Dispatcher()
-client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+
+client = AsyncGroq(api_key=GROQ_API_KEY)
 
 print("✅ BOT CREATED")
-print("✅ OPENAI CLIENT CREATED")
+print("✅ GROQ CLIENT CREATED")
 
-# ================= START COMMAND =================
+# ================= START =================
 
 @dp.message(Command("start"))
-async def start_handler(message: Message):
+async def start(message: Message):
     await message.answer(
         "👋 Привет!\n\n"
-        "🤖 Я AI бот\n"
-        "Просто напиши вопрос."
+        "🤖 Я AI бот на Groq\n"
+        "Пиши любой вопрос."
     )
 
-# ================= MAIN LOGIC =================
+# ================= AI LOGIC =================
 
 @dp.message()
-async def handle_message(message: Message):
+async def handle(message: Message):
     text = message.text
 
     if not text:
@@ -64,7 +64,7 @@ async def handle_message(message: Message):
 
     try:
         response = await client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="llama-3.1-70b-versatile",
             messages=[
                 {"role": "system", "content": "Ты полезный помощник."},
                 {"role": "user", "content": text}
@@ -80,8 +80,8 @@ async def handle_message(message: Message):
         await message.answer(answer)
 
     except Exception as e:
-        logging.exception("OPENAI ERROR")
-        await message.answer(f"⚠️ OpenAI error:\n{e}")
+        logging.exception("GROQ ERROR")
+        await message.answer(f"⚠️ Ошибка AI:\n{e}")
 
 # ================= START BOT =================
 
@@ -90,7 +90,4 @@ async def main():
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except Exception as e:
-        print("💥 FATAL ERROR:", e)
+    asyncio.run(main())
