@@ -3,3 +3,4 @@ aiosqlite
 apscheduler
 pytz
 openai>=1.30.0,<2.0
+groq
