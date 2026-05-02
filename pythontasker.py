@@ -97,7 +97,7 @@ def menu():
 # ================= HF =================
 
 async def ask_hf(prompt):
-    url = "https://api-inference.huggingface.co/models/google/flan-t5-large"
+    url = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2"
 
     headers = {"Authorization": f"Bearer {HF_API_KEY}"}
 
