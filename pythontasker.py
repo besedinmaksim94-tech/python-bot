@@ -83,9 +83,10 @@ async def handle_message(message: Message):
 # ================= ЗАПУСК =================
 
 async def main():
-    if not TELEGRAM_TOKEN or not OPENAI_API_KEY:
-        raise ValueError("❌ Укажи TELEGRAM_TOKEN и OPENAI_API_KEY")
+    print("бот стартует")
+    # твой код запуска бота
 
-    await dp.start_polling(bot)
 
 if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())
