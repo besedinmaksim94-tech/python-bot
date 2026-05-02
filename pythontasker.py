@@ -1,30 +1,29 @@
 import asyncio
 import logging
 import os
-import aiohttp
-import aiosqlite
 import time
+import aiosqlite
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from groq import AsyncGroq
 
-# ================= LOG =================
+# ================= CONFIG =================
 
 logging.basicConfig(level=logging.INFO)
-print("🔥 PRO BOT STARTED")
-
-# ================= ENV =================
+print("🔥 GROQ BOT STARTED")
 
 TOKEN = os.getenv("TELEGRAM_TOKEN")
-HF_API_KEY = os.getenv("HF_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-DB = "bot.db"
-
-if not TOKEN or not HF_API_KEY:
+if not TOKEN or not GROQ_API_KEY:
     raise ValueError("Missing env vars")
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
+client = AsyncGroq(api_key=GROQ_API_KEY)
+
+DB = "bot.db"
 
 # ================= DB =================
 
@@ -80,7 +79,7 @@ async def get_history(user_id, limit=10):
             rows = await cur.fetchall()
             return list(reversed(rows))
 
-# ================= UI BUTTONS =================
+# ================= UI =================
 
 def menu():
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -94,43 +93,49 @@ def menu():
         ]
     ])
 
-# ================= HF =================
-
-async def ask_hf(prompt):
-    url = "https://api-inference.huggingface.co/models/HuggingFaceH4/zephyr-7b-beta"
-
-    headers = {"Authorization": f"Bearer {HF_API_KEY}"}
-
-    payload = {
-        "inputs": prompt,
-        "parameters": {
-            "max_new_tokens": 250,
-            "temperature": 0.7
-        }
-    }
-
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, headers=headers, json=payload) as resp:
-            data = await resp.json()
-
-            if isinstance(data, list):
-                return data[0].get("generated_text", "")
-
-            return str(data)
-
-# ================= STREAM (fake typing) =================
+# ================= STREAM =================
 
 async def stream_send(message: Message, text: str):
     msg = await message.answer("🤖 ...")
-
     buffer = ""
+
     for ch in text:
         buffer += ch
-        if len(buffer) % 20 == 0:
+        if len(buffer) % 25 == 0:
             await msg.edit_text(buffer)
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(0.03)
 
     await msg.edit_text(buffer)
+
+# ================= GROQ =================
+
+async def ask_groq(messages, mode):
+    system_map = {
+        "assistant": "Ты полезный помощник.",
+        "teacher": "Ты учитель, объясняешь просто.",
+        "coder": "Ты программист, даёшь код.",
+        "fun": "Ты шутишь и отвечаешь весело."
+    }
+
+    sys = system_map.get(mode, system_map["assistant"])
+
+    msgs = [{"role": "system", "content": sys}]
+    for r, c in messages:
+        msgs.append({"role": r, "content": c})
+
+    # 🔥 retry (важно)
+    for i in range(3):
+        try:
+            return await client.chat.completions.create(
+                model="llama3-70b-8192",
+                messages=msgs,
+                temperature=0.7,
+            )
+        except Exception as e:
+            await asyncio.sleep(1.5 * (i + 1))
+            last_error = e
+
+    raise last_error
 
 # ================= START =================
 
@@ -140,20 +145,21 @@ async def start(message: Message):
     await set_mode(message.from_user.id, "assistant")
 
     await message.answer(
-        "👋 Привет! Я AI бот для различных целей\nВыбери режим:",
+        "👋 Привет!\nВыбери режим:",
         reply_markup=menu()
     )
 
-# ================= CALLBACK =================
+# ================= MODE =================
 
 @dp.callback_query()
 async def cb(call: CallbackQuery):
-    mode = call.data
-    await set_mode(call.from_user.id, mode)
+    await set_mode(call.from_user.id, call.data)
+    await call.message.edit_text(f"✅ Режим: {call.data}")
 
-    await call.message.edit_text(f"✅ Режим установлен: {mode}")
+# ================= MAIN =================
 
-# ================= CHAT =================
+last_request = {}
+COOLDOWN = 2
 
 @dp.message()
 async def handle(message: Message):
@@ -163,30 +169,33 @@ async def handle(message: Message):
     if not text:
         return
 
-    # спец-ответ
+    # антиспам
+    now = time.time()
+    if now - last_request.get(user_id, 0) < COOLDOWN:
+        await message.answer("⏳ Подожди...")
+        return
+    last_request[user_id] = now
+
+    # создатель
     if "кто тебя создал" in text.lower():
         await message.answer("Меня создал @wertyxw 🤖")
         return
 
+    await add_msg(user_id, "user", text)
+    history = await get_history(user_id)
     mode = await get_mode(user_id)
 
-    await add_msg(user_id, "user", text)
-
-    history = await get_history(user_id)
-
-    prompt = f"Mode: {mode}\n" + "\n".join([f"{r}: {c}" for r, c in history])
-
     try:
-        answer = await ask_hf(prompt)
+        response = await ask_groq(history, mode)
+        answer = response.choices[0].message.content
 
         await add_msg(user_id, "assistant", answer)
 
-        # streaming эффект
         await stream_send(message, answer)
 
     except Exception as e:
-        print("FULL ERROR:", repr(e))
-        await message.answer(f"⚠️ DEBUG:\n{e}")
+        logging.exception(e)
+        await message.answer("⚠️ AI временно недоступен")
 
 # ================= RUN =================
 
