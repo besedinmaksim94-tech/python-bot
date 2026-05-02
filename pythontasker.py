@@ -127,7 +127,7 @@ async def ask_groq(messages, mode):
     for i in range(3):
         try:
             return await client.chat.completions.create(
-                model="llama3-8b-8192",  # 🔥 стабильная модель
+                model="llama-3.3-70b-versatile",  # 🔥 стабильная модель
                 messages=msgs,
                 temperature=0.7,
             )
