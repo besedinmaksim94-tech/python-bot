@@ -2,91 +2,95 @@ import asyncio
 import logging
 import os
 
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher
 from aiogram.filters import Command
 from aiogram.types import Message
 from openai import AsyncOpenAI
 
-# ================= НАСТРОЙКИ =================
+# ================= ЛОГИ =================
 
-# 👉 ВСТАВЬ СВОИ ДАННЫЕ (или через Railway Variables)
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")  # токен бота
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")  # ключ OpenAI
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s"
+)
 
-# Ограничение длины сообщения
-MAX_MESSAGE_LENGTH = 2000
+print("🔥 FILE STARTED")
 
-# ================= ИНИЦИАЛИЗАЦИЯ =================
+# ================= ENV =================
 
-logging.basicConfig(level=logging.INFO)
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+print("TOKEN EXISTS:", bool(TELEGRAM_TOKEN))
+print("OPENAI EXISTS:", bool(OPENAI_API_KEY))
+
+# ЖЁСТКАЯ ПРОВЕРКА (чтобы не было silent crash)
+if not TELEGRAM_TOKEN:
+    raise ValueError("❌ TELEGRAM_TOKEN is missing")
+
+if not OPENAI_API_KEY:
+    raise ValueError("❌ OPENAI_API_KEY is missing")
+
+# ================= INIT =================
 
 bot = Bot(token=TELEGRAM_TOKEN)
 dp = Dispatcher()
-
 client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
-# ================= КОМАНДЫ =================
+print("✅ BOT CREATED")
+print("✅ OPENAI CLIENT CREATED")
+
+# ================= START COMMAND =================
 
 @dp.message(Command("start"))
 async def start_handler(message: Message):
     await message.answer(
-        "👋 <b>Привет!</b>\n\n"
-        "🤖 Я бот, который решает задачи с помощью AI\n\n"
-        "✏️ Просто отправь мне задачу текстом — я отвечу 😉",
-        parse_mode="HTML"
+        "👋 Привет!\n\n"
+        "🤖 Я AI бот\n"
+        "Просто напиши вопрос."
     )
 
-# ================= ОСНОВНАЯ ЛОГИКА =================
+# ================= MAIN LOGIC =================
 
 @dp.message()
 async def handle_message(message: Message):
-    user_text = message.text
+    text = message.text
 
-    # Проверка на пустой текст
-    if not user_text:
-        return await message.answer("❗ Отправь текстовое сообщение")
+    if not text:
+        await message.answer("❗ Отправь текст")
+        return
 
-    # Ограничение длины
-    if len(user_text) > MAX_MESSAGE_LENGTH:
-        return await message.answer("❗ Слишком длинное сообщение")
-
-    # Показываем "печатает..."
     await bot.send_chat_action(message.chat.id, "typing")
 
     try:
-        # Запрос к OpenAI
         response = await client.chat.completions.create(
-            model="gpt-4.1-mini",
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": "Ты полезный помощник."},
-                {"role": "user", "content": user_text}
+                {"role": "user", "content": text}
             ],
             temperature=0.7,
         )
 
-        answer = response.choices[0].message.content
+        answer = response.choices[0].message.content or "Пустой ответ"
 
-        # Ограничение ответа Telegram
         if len(answer) > 4096:
             answer = answer[:4096]
 
         await message.answer(answer)
 
     except Exception as e:
-        logging.error(f"Ошибка: {e}")
+        logging.exception("OPENAI ERROR")
+        await message.answer(f"⚠️ OpenAI error:\n{e}")
 
-        await message.answer(
-            "⚠️ Ошибка при обращении к AI\n"
-            "Попробуй позже"
-        )
-
-# ================= ЗАПУСК =================
+# ================= START BOT =================
 
 async def main():
-    print("бот стартует")
-    # твой код запуска бота
-
+    print("🚀 START POLLING")
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except Exception as e:
+        print("💥 FATAL ERROR:", e)
